@@ -29,8 +29,8 @@ plt.rcParams.update({
 country='PL'
 version = 'v3a'
 input_landscapes = r"C:\DATA\2025_Landscapes\natural_landscapes_54009.gpkg"
-landshp = r'C:\PROCESSING\2025_built_dynamics\data\landscapes\landscape_database_%s_54009.gpkg'%version
-datadir = r'C:\PROCESSING\2025_built_dynamics\results_landscapes_%s'%version
+landshp = r'C:\PROCESSING\2026_Ksiega_Krajobrazow\data\landscapes\landscape_database_%s_54009.gpkg'%version
+datadir = r'C:\PROCESSING\2026_Ksiega_Krajobrazow\results_landscapes_%s'%version
 if not os.path.exists(datadir):
     os.makedirs(datadir)
 
@@ -42,7 +42,7 @@ rasterize_landscapes=False
 calc_stats = False
 calc_agrm = False
 
-plot_maps=False
+plot_maps=True
 generate_tables = False
 plot_charts = False
 
