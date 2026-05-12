@@ -14,6 +14,7 @@ import numpy as np
 from osgeo import gdal
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
+from matplotlib.colors import LinearSegmentedColormap
 import pandas as pd
 from rasterio.warp import calculate_default_transform, reproject, Resampling
 import csv
@@ -42,12 +43,14 @@ rasterize_landscapes=False
 calc_stats = False
 calc_agrm = False
 
-plot_maps=True
+plot_maps=False
+plot_maps_pop=True
+plot_maps_bu=True
 generate_tables = False
 plot_charts = False
 
-plot_charts_types = True
-plot_charts_types_agg = True
+plot_charts_types = False
+plot_charts_types_agg = False
 
 # We compute landscape metrics for each year
 years=np.arange(1975,2021,5)
@@ -525,7 +528,7 @@ if calc_agrm:
 if plot_maps:
     # Load the final database with BU an POP counts per year
     map_gdf = gp.read_file(datadir+os.sep+'landscapes_%s_GHSL_54009_%s.gpkg'%(country,version))
-    
+        
     # Reproject the mad gdf to a Polish projection CRS Polkovo
     map_gdf = map_gdf.to_crs(2180)
     # Group polygons by the landscape polygon ID
@@ -609,6 +612,222 @@ if plot_maps:
     
     plt.tight_layout()
     fig.savefig(datadir + os.sep + 'zmiana_BU_POP_1975_2020_pc_map_%s.png'%version,dpi=150,bbox_inches='tight')
+    plt.show()
+
+if plot_maps_pop:
+    # Load the final database with BU an POP counts per year
+    map_gdf = gp.read_file(datadir+os.sep+'landscapes_%s_GHSL_54009_%s.gpkg'%(country,version))
+    map_gdf = map_gdf.to_crs(2180)
+    
+    map_crisp_gdf = gp.read_file(datadir+os.sep+'landscapes_CRISP_%s_GHSL_54009_%s.gpkg'%(country,version))
+    map_crisp_gdf=map_crisp_gdf.to_crs(2180)
+    
+    mezo_gdf = gp.read_file(r"C:\DATA\2025_Landscapes\mesoregions_2018_54009.gpkg").to_crs(2180)
+    mezo_gdf = mezo_gdf[["N_mezo_", "geometry"]]
+    
+    # ------------------------------------------------------------------
+    # ASSIGN MESOREGIONS USING CENTROIDS
+    # ------------------------------------------------------------------
+    
+    # Create centroid layers
+    map_centroids = map_gdf.copy()
+    map_centroids["geometry"] = map_centroids.centroid
+    
+    map_crisp_centroids = map_crisp_gdf.copy()
+    map_crisp_centroids["geometry"] = map_crisp_centroids.centroid
+    
+    # Spatial join centroids to mesoregions
+    map_join = gp.sjoin(
+        map_centroids,
+        mezo_gdf,
+        how="left",
+        predicate="within"
+    )
+    
+    map_crisp_join = gp.sjoin(
+        map_crisp_centroids,
+        mezo_gdf,
+        how="left",
+        predicate="within"
+    )
+    
+    # Transfer mesoregion names back
+    map_gdf["N_mezo"] = map_join["N_mezo"].values
+    map_crisp_gdf["N_mezo"] = map_crisp_join["N_mezo"].values
+    
+    # ------------------------------------------------------------------
+    # AGGREGATE
+    # ------------------------------------------------------------------
+    map_agg = map_gdf.dissolve(
+        by="N_mezo",
+        aggfunc={
+            "pop_1975": "sum",
+            "pop_1990": "sum",
+            "pop_2020": "sum",
+        }
+    ).reset_index()
+    
+    map_crisp_agg = map_crisp_gdf.dissolve(
+        by="N_mezo",
+        aggfunc={
+            "pop_2020": "sum",
+            "pop_2100": "sum"
+        }
+    ).reset_index()
+    
+    # -------------------------------------------------------
+    # Calculate population and bu change in 1975-1990-2020
+    # -------------------------------------------------------
+    map_agg["pop_1975_1990"] = ((map_agg["pop_1990"] - map_agg["pop_1975"]) /map_agg["pop_1975"])*100
+    map_agg["pop_1990_2020"] = ((map_agg["pop_2020"] - map_agg["pop_1990"]) /map_agg["pop_1990"])*100
+    map_crisp_agg["pop_2020_2100"] = ((map_crisp_agg["pop_2100"] - map_crisp_agg["pop_2020"])/map_crisp_agg["pop_2020"])*100
+    
+    # Classify into trend categories
+    _bins = [-float("inf"),0, float("inf")]
+    _labels = ["Spadek","Wzrost"]
+    
+    _bins = [-float("inf"), -15, 0, float("inf")]
+
+    _labels = [
+        "< -15%",
+        "-15% to 0%",
+        "> 0%"
+    ]
+
+    map_agg["pop_trend_1975_1990"] = pd.cut(map_agg["pop_1975_1990"], bins=_bins, labels=_labels)
+    map_agg["pop_trend_1990_2020"] = pd.cut(map_agg["pop_1990_2020"], bins=_bins, labels=_labels)
+    map_crisp_agg["pop_trend_2020_2100"] = pd.cut(map_crisp_agg["pop_2020_2100"], bins=_bins, labels=_labels)
+           
+    # -------------------------------------------------------
+    # Plot Population change for two periods
+    # -------------------------------------------------------
+    fig, ax = plt.subplots(1, 3, figsize=(16, 8), dpi=150)
+    # Wzrost #FFA850
+    # Spadek #006BA0
+    _cmap = LinearSegmentedColormap.from_list(
+        "increase_decline",["#106294", "#30A2E8", "#FFA850"],N=6)
+    
+    map_agg.plot(column="pop_trend_1975_1990", cmap=_cmap, legend=False, ax=ax[0], edgecolor="black", linewidth=0.1)
+    ax[0].set_title("1975–1990", fontsize=14)  
+
+    map_agg.plot(column="pop_trend_1990_2020", cmap=_cmap, legend=False, ax=ax[1], edgecolor="black", linewidth=0.1)
+    ax[1].set_title("1990–2020", fontsize=14)
+    
+    map_crisp_agg.plot(column="pop_trend_2020_2100", cmap=_cmap, legend=False, ax=ax[2], edgecolor="black", linewidth=0.1)
+    ax[2].set_title("2020_2100", fontsize=14)
+       
+    for a in ax.flatten(): a.axis("off")
+    
+    plt.tight_layout()
+    fig.savefig(datadir + os.sep + 'trend_POP_1975_2020_pc_map_%s.png'%version,dpi=150,bbox_inches='tight')
+    plt.show()
+
+if plot_maps_bu:
+    # Load the final database with BU an POP counts per year
+    map_gdf = gp.read_file(datadir+os.sep+'landscapes_%s_GHSL_54009_%s.gpkg'%(country,version))
+    map_gdf = map_gdf.to_crs(2180)
+    
+    map_crisp_gdf = gp.read_file(datadir+os.sep+'landscapes_CRISP_%s_GHSL_54009_%s.gpkg'%(country,version))
+    map_crisp_gdf=map_crisp_gdf.to_crs(2180)
+    
+    mezo_gdf = gp.read_file(r"C:\DATA\2025_Landscapes\mesoregions_2018_54009.gpkg").to_crs(2180)
+    mezo_gdf = mezo_gdf[["N_mezo", "geometry"]]
+    
+    # ------------------------------------------------------------------
+    # ASSIGN MESOREGIONS USING CENTROIDS
+    # ------------------------------------------------------------------
+    
+    # Create centroid layers
+    map_centroids = map_gdf.copy()
+    map_centroids["geometry"] = map_centroids.centroid
+    
+    map_crisp_centroids = map_crisp_gdf.copy()
+    map_crisp_centroids["geometry"] = map_crisp_centroids.centroid
+    
+    # Spatial join centroids to mesoregions
+    map_join = gp.sjoin(
+        map_centroids,
+        mezo_gdf,
+        how="left",
+        predicate="within"
+    )
+    
+    map_crisp_join = gp.sjoin(
+        map_crisp_centroids,
+        mezo_gdf,
+        how="left",
+        predicate="within"
+    )
+    
+    # Transfer mesoregion names back
+    map_gdf["N_mezo"] = map_join["N_mezo"].values
+    map_crisp_gdf["N_mezo"] = map_crisp_join["N_mezo"].values
+    
+    # ------------------------------------------------------------------
+    # AGGREGATE
+    # ------------------------------------------------------------------
+    map_agg = map_gdf.dissolve(
+        by="N_mezo",
+        aggfunc={
+            "bu_1975": "sum",
+            "bu_1990": "sum",
+            "bu_2020": "sum"
+        }
+    ).reset_index()
+    
+    map_crisp_agg = map_crisp_gdf.dissolve(
+        by="N_mezo",
+        aggfunc={
+            "bu_2020": "sum",
+            "bu_2100": "sum"
+        }
+    ).reset_index()
+    
+    # -------------------------------------------------------
+    # Calculate population and bu change in 1975-1990-2020
+    # -------------------------------------------------------   
+    map_agg["bu_1975_1990"] = ((map_agg["bu_1990"] - map_agg["bu_1975"]) /map_agg["bu_1975"]) *100
+    map_agg["bu_1990_2020"] = ((map_agg["bu_2020"] - map_agg["bu_1990"]) /map_agg["bu_1990"]) *100
+    map_crisp_agg["bu_2020_2100"] = ((map_crisp_agg["bu_2100"] - map_crisp_agg["bu_2020"])/map_crisp_agg["bu_2020"])*100
+    
+    # Classify into trend categories
+    _bins = [-float("inf"),0, float("inf")]
+    _labels = ["Spadek","Wzrost"]
+    
+    _bins = [0, 20, 40, float("inf")]
+
+    _labels = [
+        "0% to 20%",
+        "20% to 40%",
+        "> 40%"
+    ]
+   
+    map_agg["bu_trend_1975_1990"] = pd.cut(map_agg["bu_1975_1990"], bins=_bins, labels=_labels)
+    map_agg["bu_trend_1990_2020"] = pd.cut(map_agg["bu_1990_2020"], bins=_bins, labels=_labels)
+    map_crisp_agg["bu_trend_2020_2100"] = pd.cut(map_crisp_agg["bu_2020_2100"], bins=_bins, labels=_labels)
+       
+    # -------------------------------------------------------
+    # Plot BU change for two periods
+    # -------------------------------------------------------
+    fig, ax = plt.subplots(1, 3, figsize=(16, 8), dpi=150)
+    # Wzrost #FFA850
+    # Spadek #006BA0
+    _cmap = LinearSegmentedColormap.from_list(
+        "increase_decline",["#FFFF90","#FF9830", "#C00000"],N=256)
+   
+    map_agg.plot(column="bu_trend_1975_1990", cmap=_cmap, legend=False, ax=ax[0], edgecolor="black", linewidth=0.1)
+    ax[0].set_title("1975–1990", fontsize=14)  
+
+    map_agg.plot(column="bu_trend_1990_2020", cmap=_cmap, legend=False, ax=ax[1], edgecolor="black", linewidth=0.1)
+    ax[1].set_title("1990–2020", fontsize=14)
+    
+    map_crisp_agg.plot(column="bu_trend_2020_2100", cmap=_cmap, legend=False, ax=ax[2], edgecolor="black", linewidth=0.1)
+    ax[2].set_title("2020_2100", fontsize=14)
+    
+    for a in ax.flatten(): a.axis("off")
+    
+    plt.tight_layout()
+    fig.savefig(datadir + os.sep + 'trend_BU_1975_2020_pc_map_%s.png'%version,dpi=150,bbox_inches='tight')
     plt.show()
 
 if plot_charts:
